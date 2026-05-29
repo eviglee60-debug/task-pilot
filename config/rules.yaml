@@ -1,0 +1,53 @@
+# Task-pilot deadline rules
+# Each rule defines: name, description, matching conditions, and default deadline.
+# Rules are matched in order — first match wins.
+
+rules:
+  - name: email_reply
+    description: "邮件必须24小时内回复"
+    sources: [email]
+    default_delta_hours: 24
+    priority: high
+
+  - name: oa_task
+    description: "OA转达事项3天内处理"
+    sender_types: [oa]
+    keywords: ["OA", "转达", "通知"]
+    default_delta_days: 3
+    priority: normal
+
+  - name: cnipa_oa1_draft
+    description: "中国OA1：2个月提示提供答复初稿"
+    sender_types: [cnipa]
+    keywords: ["OA1", "第一次审查意见"]
+    default_delta_days: 60
+    priority: urgent
+
+  - name: cnipa_oa2_draft
+    description: "中国OA2：1个月提示提供答复初稿"
+    sender_types: [cnipa]
+    keywords: ["OA2", "第二次审查意见"]
+    default_delta_days: 30
+    priority: urgent
+
+  - name: cnipa_official
+    description: "国知局官方期限：15天"
+    sender_types: [cnipa]
+    keywords: ["官方期限", "答复期限", "补正"]
+    default_delta_days: 15
+    priority: urgent
+
+  - name: court_filing
+    description: "法院文件规定的期限（从文件内容提取）"
+    sender_types: [court]
+    priority: urgent
+
+  - name: client_deadline
+    description: "客户指示的任务期限（从消息内容提取）"
+    sender_types: [client]
+    priority: high
+
+  - name: default
+    description: "默认规则：3天内处理"
+    default_delta_days: 3
+    priority: normal
