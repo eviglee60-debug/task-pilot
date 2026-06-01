@@ -27,6 +27,8 @@ class SenderType(str, Enum):
     CLIENT = "client"
     COURT = "court"
     CNIPA = "cnipa"           # 国知局
+    TRADEMARK_OFFICE = "trademark_office"  # 商标局
+    COPYRIGHT_BUREAU = "copyright_bureau"  # 版权局
     INTERNAL = "internal"
     OA = "oa"
     UNKNOWN = "unknown"

@@ -77,10 +77,7 @@ class MessagePoller:
         """Single poll cycle: fetch → archive → analyze → propose."""
         for connector in self.connectors:
             source_name = connector.source.value
-            since = self._last_poll.get(
-                source_name,
-                datetime.utcnow() - timedelta(hours=1),
-            )
+            since = self._last_poll.get(source_name)  # None on first run → connector uses its own lookback
 
             try:
                 # Step 1: Fetch (read-only)
@@ -90,6 +87,15 @@ class MessagePoller:
                 )
 
                 for msg in messages:
+                    # Step 1.5: Process attachments on demand (if connector supports it)
+                    if msg.metadata.get("has_attachments") and hasattr(connector, "get_attachment_texts"):
+                        att_texts = await connector.get_attachment_texts(msg.source_id)
+                        if att_texts:
+                            att_content = "\n\n".join(
+                                f"[附件: {fname}]\n{text}" for fname, text in att_texts.items()
+                            )
+                            msg.content = msg.content + "\n\n" + att_content
+
                     # Step 2: Archive (append-only)
                     snapshot = self.archive.archive(msg)
 
@@ -120,18 +126,26 @@ class MessagePoller:
             except Exception:
                 logger.exception("[%s] Error processing messages", source_name)
 
-    async def poll_now(self) -> int:
+    async def poll_now(self, limit: int = 50) -> int:
         """Trigger an immediate poll cycle. Returns total new tasks created."""
         total = 0
         for connector in self.connectors:
             source_name = connector.source.value
-            since = self._last_poll.get(
-                source_name,
-                datetime.utcnow() - timedelta(hours=1),
-            )
+            since = self._last_poll.get(source_name)
 
-            messages = await connector.fetch_new_messages(since=since)
+            messages = await connector.fetch_new_messages(since=since, limit=limit)
+            logger.info("[%s] Fetched %d message(s)", source_name, len(messages))
+
             for msg in messages:
+                # Process attachments on demand
+                if msg.metadata.get("has_attachments") and hasattr(connector, "get_attachment_texts"):
+                    att_texts = await connector.get_attachment_texts(msg.source_id)
+                    if att_texts:
+                        att_content = "\n\n".join(
+                            f"[附件: {fname}]\n{text}" for fname, text in att_texts.items()
+                        )
+                        msg.content = msg.content + "\n\n" + att_content
+
                 snapshot = self.archive.archive(msg)
                 extraction = await self.analyzer.analyze(snapshot)
                 if extraction.action_items:

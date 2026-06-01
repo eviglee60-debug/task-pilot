@@ -3,3 +3,8 @@ uvicorn>=0.34.0
 httpx>=0.28.0
 pydantic>=2.10.0
 pydantic-settings>=2.7.0
+pywin32>=306; sys_platform == "win32"
+
+# PDF 附件解析 (可选，安装一个即可)
+# PyMuPDF>=1.24.0
+# pdfplumber>=0.11.0

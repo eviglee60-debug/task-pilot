@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Task Pilot</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f5f5f5; color: #333; }
+.header { background: #1a73e8; color: #fff; padding: 16px 24px; display: flex; align-items: center; justify-content: space-between; }
+.header h1 { font-size: 20px; font-weight: 600; }
+.header .stats { font-size: 14px; opacity: 0.9; }
+.container { max-width: 900px; margin: 0 auto; padding: 16px; }
+.tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+.tab { padding: 8px 16px; border: none; background: #fff; border-radius: 8px; cursor: pointer; font-size: 14px; color: #666; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+.tab.active { background: #1a73e8; color: #fff; }
+.empty { text-align: center; padding: 48px; color: #999; }
+.task-card { background: #fff; border-radius: 12px; padding: 16px; margin-bottom: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); transition: box-shadow 0.2s; }
+.task-card:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.12); }
+.task-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.task-title { font-size: 15px; font-weight: 600; flex: 1; }
+.task-meta { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 500; }
+.badge-urgent { background: #fce8e6; color: #c5221f; }
+.badge-high { background: #fef7e0; color: #b06000; }
+.badge-normal { background: #e8f0fe; color: #1a73e8; }
+.badge-low { background: #f1f3f4; color: #666; }
+.badge-source { background: #e8f5e9; color: #2e7d32; }
+.badge-type { background: #f3e8fd; color: #7b1fa2; }
+.task-desc { font-size: 13px; color: #666; margin-top: 8px; line-height: 1.5; }
+.task-deadline { font-size: 13px; color: #c5221f; margin-top: 4px; font-weight: 500; }
+.task-actions { display: flex; gap: 8px; margin-top: 12px; }
+.btn { padding: 6px 16px; border: none; border-radius: 6px; font-size: 13px; cursor: pointer; font-weight: 500; transition: opacity 0.2s; }
+.btn:hover { opacity: 0.85; }
+.btn-confirm { background: #1a73e8; color: #fff; }
+.btn-modify { background: #fbbc04; color: #333; }
+.btn-ignore { background: #dadce0; color: #666; }
+.btn-restore { background: #e8f0fe; color: #1a73e8; }
+.collapsed .task-desc, .collapsed .task-actions { display: none; }
+.section-title { font-size: 14px; color: #999; margin: 16px 0 8px; cursor: pointer; user-select: none; }
+.section-title::before { content: "▼ "; font-size: 10px; }
+.section-title.collapsed::before { content: "▶ "; }
+
+/* Modal */
+.modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 100; align-items: center; justify-content: center; }
+.modal-overlay.show { display: flex; }
+.modal { background: #fff; border-radius: 12px; padding: 24px; width: 90%; max-width: 420px; }
+.modal h3 { margin-bottom: 16px; font-size: 16px; }
+.modal label { display: block; font-size: 13px; color: #666; margin-bottom: 4px; }
+.modal input, .modal select { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; margin-bottom: 12px; }
+.modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; }
+.btn-cancel { background: #dadce0; color: #666; }
+
+/* Toast */
+.toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: #333; color: #fff; padding: 10px 20px; border-radius: 8px; font-size: 14px; opacity: 0; transition: opacity 0.3s; pointer-events: none; z-index: 200; }
+.toast.show { opacity: 1; }
+
+@media (max-width: 600px) {
+  .container { padding: 8px; }
+  .task-card { padding: 12px; }
+  .task-actions { flex-wrap: wrap; }
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Task Pilot</h1>
+  <div class="stats" id="stats">加载中...</div>
+</div>
+
+<div class="container">
+  <div class="tabs">
+    <button class="tab active" onclick="switchTab('pending')">待确认</button>
+    <button class="tab" onclick="switchTab('confirmed')">已确认</button>
+    <button class="tab" onclick="switchTab('ignored')">已忽略</button>
+  </div>
+  <div id="task-list"></div>
+</div>
+
+<!-- Modify Modal -->
+<div class="modal-overlay" id="modal">
+  <div class="modal">
+    <h3>修改任务</h3>
+    <label>标题</label>
+    <input type="text" id="modal-title">
+    <label>截止日期</label>
+    <input type="datetime-local" id="modal-deadline">
+    <label>优先级</label>
+    <select id="modal-priority">
+      <option value="urgent">紧急 urgent</option>
+      <option value="high">高 high</option>
+      <option value="normal" selected>普通 normal</option>
+      <option value="low">低 low</option>
+    </select>
+    <div class="modal-actions">
+      <button class="btn btn-cancel" onclick="closeModal()">取消</button>
+      <button class="btn btn-confirm" id="modal-confirm-btn">确认</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+let currentTab = 'pending';
+let allTasks = [];
+let currentModifyId = null;
+
+const API = '';
+
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 2000);
+}
+
+function priorityLabel(p) {
+  return {urgent:'紧急',high:'高',normal:'普通',low:'低'}[p] || p;
+}
+function sourceLabel(s) {
+  return {email:'邮件',dingtalk:'钉钉',wechat:'微信'}[s] || s;
+}
+function typeLabel(t) {
+  return {client:'客户',court:'法院',cnipa:'国知局',trademark_office:'商标局',copyright_bureau:'版权局',internal:'内部',oa:'OA',unknown:'未知'}[t] || t;
+}
+function formatDeadline(d) {
+  if (!d) return '';
+  const dt = new Date(d);
+  const now = new Date();
+  const diff = dt - now;
+  const days = Math.ceil(diff / 86400000);
+  let label = dt.toLocaleDateString('zh-CN') + ' ' + dt.toLocaleTimeString('zh-CN', {hour:'2-digit',minute:'2-digit'});
+  if (days < 0) label += ' (已过期 ' + Math.abs(days) + '天)';
+  else if (days === 0) label += ' (今天)';
+  else if (days === 1) label += ' (明天)';
+  else if (days <= 7) label += ' (' + days + '天后)';
+  return label;
+}
+
+async function fetchTasks() {
+  try {
+    const resp = await fetch(API + '/tasks?limit=100');
+    allTasks = await resp.json();
+    render();
+  } catch (e) {
+    document.getElementById('task-list').innerHTML = '<div class="empty">无法连接服务器</div>';
+  }
+}
+
+async function fetchStats() {
+  try {
+    const resp = await fetch(API + '/health');
+    const data = await resp.json();
+    document.getElementById('stats').textContent = '待处理: ' + data.pending_tasks + ' | 快照: ' + data.snapshots;
+  } catch {}
+}
+
+function render() {
+  const filtered = allTasks.filter(t => {
+    if (currentTab === 'pending') return t.status === 'pending';
+    if (currentTab === 'confirmed') return t.status === 'confirmed' || t.status === 'modified';
+    if (currentTab === 'ignored') return t.status === 'ignored';
+    return false;
+  });
+
+  if (filtered.length === 0) {
+    const msg = {pending:'暂无待确认任务',confirmed:'暂无已确认任务',ignored:'暂无已忽略任务'}[currentTab];
+    document.getElementById('task-list').innerHTML = '<div class="empty">' + msg + '</div>';
+    return;
+  }
+
+  // Sort: urgent first, then by deadline
+  const prio = {urgent:0, high:1, normal:2, low:3};
+  filtered.sort((a, b) => {
+    const d = (prio[a.priority] || 2) - (prio[b.priority] || 2);
+    if (d !== 0) return d;
+    if (a.deadline && b.deadline) return new Date(a.deadline) - new Date(b.deadline);
+    if (a.deadline) return -1;
+    if (b.deadline) return 1;
+    return 0;
+  });
+
+  let html = '';
+  for (const t of filtered) {
+    const isDone = t.status !== 'pending';
+    html += '<div class="task-card' + (isDone ? ' collapsed' : '') + '">';
+    html += '<div class="task-header"><div class="task-title">' + esc(t.title) + '</div></div>';
+    html += '<div class="task-meta">';
+    html += '<span class="badge badge-' + t.priority + '">' + priorityLabel(t.priority) + '</span>';
+    html += '<span class="badge badge-source">' + sourceLabel(t.source) + '</span>';
+    html += '<span class="badge badge-type">' + typeLabel(t.sender_type) + '</span>';
+    if (t.category) html += '<span class="badge badge-source">' + esc(t.category) + '</span>';
+    html += '</div>';
+    if (t.description) html += '<div class="task-desc">' + esc(t.description) + '</div>';
+    if (t.deadline) html += '<div class="task-deadline">截止: ' + formatDeadline(t.deadline) + '</div>';
+    if (t.status === 'pending') {
+      html += '<div class="task-actions">';
+      html += '<button class="btn btn-confirm" onclick="confirmTask(\'' + t.id + '\')">确认</button>';
+      html += '<button class="btn btn-modify" onclick="openModify(\'' + t.id + '\')">修改</button>';
+      html += '<button class="btn btn-ignore" onclick="ignoreTask(\'' + t.id + '\')">忽略</button>';
+      html += '</div>';
+    } else if (isDone) {
+      html += '<div class="task-actions">';
+      if (t.calendar_event_id) html += '<span style="font-size:12px;color:#2e7d32;">已写入日历</span>';
+      html += '<button class="btn btn-restore" onclick="restoreTask(\'' + t.id + '\')">恢复</button>';
+      html += '</div>';
+    }
+    html += '</div>';
+  }
+  document.getElementById('task-list').innerHTML = html;
+}
+
+function esc(s) {
+  if (!s) return '';
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+function switchTab(tab) {
+  currentTab = tab;
+  document.querySelectorAll('.tab').forEach((el, i) => {
+    el.classList.toggle('active', ['pending','confirmed','ignored'][i] === tab);
+  });
+  render();
+}
+
+async function confirmTask(id) {
+  try {
+    const resp = await fetch(API + '/tasks/' + id + '/confirm', {method:'POST'});
+    if (resp.ok) { toast('已确认，已写入日历'); fetchTasks(); fetchStats(); }
+    else toast('操作失败');
+  } catch { toast('网络错误'); }
+}
+
+async function ignoreTask(id) {
+  try {
+    const resp = await fetch(API + '/tasks/' + id + '/ignore', {method:'POST'});
+    if (resp.ok) { toast('已忽略'); fetchTasks(); fetchStats(); }
+    else toast('操作失败');
+  } catch { toast('网络错误'); }
+}
+
+function openModify(id) {
+  currentModifyId = id;
+  const t = allTasks.find(x => x.id === id);
+  if (!t) return;
+  document.getElementById('modal-title').value = t.title;
+  document.getElementById('modal-deadline').value = t.deadline ? new Date(t.deadline).toISOString().slice(0,16) : '';
+  document.getElementById('modal-priority').value = t.priority;
+  document.getElementById('modal').classList.add('show');
+}
+
+function closeModal() {
+  document.getElementById('modal').classList.remove('show');
+  currentModifyId = null;
+}
+
+document.getElementById('modal-confirm-btn').onclick = async function() {
+  if (!currentModifyId) return;
+  const title = document.getElementById('modal-title').value;
+  const dl = document.getElementById('modal-deadline').value;
+  const priority = document.getElementById('modal-priority').value;
+  const body = {};
+  if (title) body.title = title;
+  if (dl) body.deadline = new Date(dl).toISOString();
+  if (priority) body.priority = priority;
+  try {
+    const resp = await fetch(API + '/tasks/' + currentModifyId + '/modify', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(body),
+    });
+    if (resp.ok) { toast('已修改并确认'); closeModal(); fetchTasks(); fetchStats(); }
+    else toast('操作失败');
+  } catch { toast('网络错误'); }
+};
+
+async function restoreTask(id) {
+  // For now, just show a message — restoring requires re-confirm
+  toast('恢复功能暂未实现');
+}
+
+// Auto-refresh every 30 seconds
+setInterval(() => { fetchTasks(); fetchStats(); }, 30000);
+
+// Initial load
+fetchTasks();
+fetchStats();
+</script>
+</body>
+</html>

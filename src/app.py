@@ -14,10 +14,13 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.responses import RedirectResponse
+from fastapi.staticfiles import StaticFiles
 
 from config.settings import Settings
 from src.connectors.dingtalk_connector import DingTalkConnector
 from src.connectors.email_connector import EmailConnector
+from src.connectors.outlook_com_connector import OutlookComConnector
 from src.routers import audit as audit_router
 from src.routers import snapshots as snapshot_router
 from src.routers import tasks as task_router
@@ -25,6 +28,8 @@ from src.services.analyzer import MessageAnalyzer
 from src.services.archive import SnapshotArchive
 from src.services.audit import AuditLog
 from src.services.calendar import CalendarService
+from src.services.com_calendar_service import ComCalendarService
+from src.services.ocr import MistralOCR
 from src.services.rules import RuleEngine
 from src.services.task_manager import TaskManager
 from src.services.poller import MessagePoller
@@ -47,13 +52,35 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     # ── Connectors ───────────────────────────────────────────────────────────
     connectors = []
-    if settings.ms_graph_token:
+    use_com = settings.use_outlook_com
+
+    # OCR service for PDF/image attachments
+    ocr_service = None
+    if settings.mistral_api_key:
+        ocr_service = MistralOCR(
+            api_key=settings.mistral_api_key,
+            ocr_url=settings.mistral_ocr_url,
+        )
+        logger.info("Mistral OCR service enabled")
+
+    if settings.ms_graph_token and not use_com:
         email_conn = EmailConnector(
             access_token=settings.ms_graph_token,
             mailbox=settings.mailbox,
         )
         connectors.append(email_conn)
-        logger.info("Email connector enabled (mailbox=%s)", settings.mailbox)
+        logger.info("Email connector enabled via Graph API (mailbox=%s)", settings.mailbox)
+    else:
+        try:
+            com_conn = OutlookComConnector(
+                folder_name=settings.outlook_folder,
+                ocr_service=ocr_service,
+            )
+            connectors.append(com_conn)
+            use_com = True
+            logger.info("Email connector enabled via local Outlook COM (folder=%s)", settings.outlook_folder)
+        except Exception as e:
+            logger.warning("Outlook COM not available: %s", e)
 
     if settings.dingtalk_app_key:
         dingtalk_conn = DingTalkConnector(
@@ -65,8 +92,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     if not connectors:
         logger.warning(
-            "No connectors configured. Set TASK_PILOT_MS_GRAPH_TOKEN "
-            "or TASK_PILOT_DINGTALK_APP_KEY in .env"
+            "No connectors configured. Set TASK_PILOT_USE_OUTLOOK_COM=true "
+            "and ensure Outlook is installed, or configure Graph API / DingTalk."
         )
 
     # ── Services ─────────────────────────────────────────────────────────────
@@ -76,13 +103,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         llm_api_key=settings.llm_api_key,
         llm_base_url=settings.llm_base_url,
         llm_model=settings.llm_model,
+        llm_provider=settings.llm_provider,
         rule_engine=rule_engine,
     )
 
-    calendar = CalendarService(
-        access_token=settings.ms_graph_token,
-        calendar_id=settings.calendar_id,
-    )
+    if use_com:
+        calendar = ComCalendarService(calendar_name=settings.outlook_calendar_name)
+        logger.info("Calendar service enabled via local Outlook COM")
+    else:
+        calendar = CalendarService(
+            access_token=settings.ms_graph_token,
+            calendar_id=settings.calendar_id,
+        )
 
     task_manager = TaskManager(
         archive=archive,
@@ -132,6 +164,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(task_router.router)
     app.include_router(snapshot_router.router)
     app.include_router(audit_router.router)
+
+    # Static files (Web UI)
+    from pathlib import Path
+    static_dir = Path(__file__).parent / "static"
+    if static_dir.is_dir():
+        app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+
+    @app.get("/")
+    async def root():
+        return RedirectResponse(url="/static/index.html")
+
+    @app.post("/poll")
+    async def poll_now(limit: int = 5):
+        """Trigger an immediate poll cycle (for testing)."""
+        total = await poller.poll_now(limit=limit)
+        return {"new_tasks": total, "pending": len(task_manager.get_pending())}
 
     @app.get("/health")
     async def health():
